@@ -1,0 +1,8 @@
+# docker build 時にイメージへ送らないファイル（ビルドの高速化・イメージの軽量化）
+# tests/ は本番コンテナでは不要なので除外する
+__pycache__/
+*.pyc
+.venv/
+data/
+.ipynb_checkpoints/
+tests/

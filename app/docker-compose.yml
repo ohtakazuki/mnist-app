@@ -1,0 +1,19 @@
+# 単一サービスでも docker-compose で書く価値はある:
+# - 起動引数（ポート/ボリューム/環境変数）が YAML として版管理できる
+# - 将来 DB やモニタリングを足すときの拡張点になる
+# - `docker-compose up` 一発で立ち上がるので手順が陳腐化しにくい
+
+services:
+  mnist-app:
+    build: .                          # このフォルダの Dockerfile からビルド
+    image: mnist-app:latest
+    container_name: mnist-app
+    ports:
+      - "8000:8000"                   # ホスト側:コンテナ側
+    restart: unless-stopped           # 異常終了したら自動で再起動（手動停止時は除く）
+    healthcheck:                      # /health を定期的に叩いて、コンテナの健康状態を判定
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8000/health')"]
+      interval: 30s                   # 30秒ごとに確認
+      timeout: 5s
+      retries: 3                      # 3回連続で失敗したら unhealthy
+      start_period: 10s               # 起動直後（モデルロード中）の失敗はカウントしない

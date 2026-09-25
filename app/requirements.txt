@@ -1,0 +1,8 @@
+fastapi
+uvicorn[standard]
+pydantic
+python-multipart
+pillow
+numpy
+# 第8回追記
+gradio

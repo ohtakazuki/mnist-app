@@ -1,0 +1,25 @@
+# HorizontalPodAutoscaler: CPU使用率に応じて Pod 数を自動で増減させる。
+#
+# 注意: Docker Desktop の K8s には標準で metrics-server が入っていないため、
+# このマニフェストは「概念とYAMLの読み方を理解する」ためのサンプル。
+# 実際に動かすには metrics-server を別途入れる必要がある。
+#
+# クラウドマネージドK8s（EKS/GKE/AKS）では metrics-server が最初から動いていることが多い。
+apiVersion: autoscaling/v2
+kind: HorizontalPodAutoscaler
+metadata:
+  name: mnist-app
+spec:
+  scaleTargetRef:                      # 何をスケールさせるか
+    apiVersion: apps/v1
+    kind: Deployment
+    name: mnist-app
+  minReplicas: 2                       # 最小レプリカ数（暇な時もこれ以下にはしない）
+  maxReplicas: 10                      # 最大レプリカ数
+  metrics:
+    - type: Resource
+      resource:
+        name: cpu
+        target:
+          type: Utilization
+          averageUtilization: 70       # 平均CPU使用率が 70% を超えたらスケールアウト

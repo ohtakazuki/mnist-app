@@ -1,0 +1,43 @@
+# Deployment: 「mnist-app コンテナを 2 つ常時稼働させる」という"望む状態"を宣言する。
+# K8s のコントローラはこの宣言に合うように Pod を作り続ける（落ちたら再起動、ノード落ちたら別ノードで再作成）。
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: mnist-app                      # Deployment の名前（kubectl get deploy で表示される）
+  labels:
+    app: mnist-app
+spec:
+  replicas: 2                          # Pod を何個並列に動かすか
+  selector:
+    matchLabels:
+      app: mnist-app                   # この label を持つ Pod を「自分の管理対象」と認識
+  template:                            # ↓ ここから先は「1個の Pod の設計図」
+    metadata:
+      labels:
+        app: mnist-app                 # selector と一致させること（一致しないと Pod が浮く）
+    spec:
+      containers:
+        - name: mnist-app
+          image: ghcr.io/ohtakazuki/mnist-app/mnist-app:latest
+          imagePullPolicy: Always      # latest タグなので毎回最新を取りに行く
+          ports:
+            - containerPort: 8000      # コンテナ内で待ち受けるポート（main.py の uvicorn と一致）
+          resources:
+            requests:                  # 「最低これだけ確保したい」量
+              cpu: "100m"              # 0.1 CPU コア相当
+              memory: "256Mi"
+            limits:                    # 「これ以上は使わせない」上限
+              cpu: "500m"
+              memory: "1Gi"
+          readinessProbe:              # 「リクエストを受けて良い状態か」を判定（OKになるまでServiceに参加させない）
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 5
+            periodSeconds: 10
+          livenessProbe:               # 「生きているか」を判定（NGなら Pod を再起動）
+            httpGet:
+              path: /health
+              port: 8000
+            initialDelaySeconds: 30
+            periodSeconds: 30

@@ -1,0 +1,18 @@
+# Service: 複数 Pod への入口（負荷分散＋安定したアドレス）。
+# Pod は再作成されると IP が変わるが、Service は固定アドレスとして振る舞う。
+#
+# type: NodePort で「ノードの 30080 番ポート」を外部に開ける。
+# Docker Desktop の K8s では「ノード = 自分のマシン」なので、ブラウザから http://localhost:30080 で届く。
+apiVersion: v1
+kind: Service
+metadata:
+  name: mnist-app
+spec:
+  type: NodePort
+  selector:
+    app: mnist-app                     # この label を持つ Pod 群に転送（Deployment 側と一致）
+  ports:
+    - name: http
+      port: 80                         # クラスタ内部から叩くときのポート
+      targetPort: 8000                 # Pod（コンテナ）側のポート（containerPort と一致）
+      nodePort: 30080                  # 外部からの入口（30000-32767 の範囲）

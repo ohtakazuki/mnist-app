@@ -1,0 +1,145 @@
+# GitHub Actions: push / PR のたびに自動で走る CI/CD パイプライン。
+#
+# 構成:
+#   ジョブ test          : Lint(ruff) + 単体/結合テスト（E2E は除外）← 毎回必ず実行
+#   ジョブ e2e           : E2E テスト（遅い・重み必須）← 手動 or 夜間だけ実行
+#   ジョブ build-and-push: Docker ビルド & ghcr.io へ push ← main への push 時のみ
+#
+# GITHUB_TOKEN はリポジトリに自動付与されるため、別途設定は不要。
+
+name: CI
+
+on: # トリガー（動き出すきっかけ）
+  push:
+    branches: ["main", "develop"]
+  pull_request:
+    branches: ["main"]
+  workflow_dispatch: # 「Actions」タブから手動実行できるようにする（E2E 用）
+  schedule:
+    - cron: "0 18 * * *" # 毎日 03:00 JST(=18:00 UTC) に E2E を回す（夜間バッチ）
+
+# 同じブランチで新しい push が来たら、進行中の古い実行をキャンセルして CI 時間を節約
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  PYTHON_VERSION: "3.12"
+  IMAGE_NAME: mnist-app
+
+jobs:
+  # =========================================================
+  # ジョブ1: Lint + 単体/結合テスト（E2E は -m "not e2e" で除外）
+  #   → 速い・重み(model.pth)不要。push / PR のたびに必ず走らせる
+  # =========================================================
+  test:
+    name: Lint & Unit/Integration Test
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: app/requirements.txt # キャッシュ判定用に依存ファイルを明示
+
+      - name: Install dependencies (CPU torch + app reqs)
+        run: |
+          python -m pip install --upgrade pip
+          # torch は requirements.txt に含めず、CI/Docker 側で CPU 版を明示インストール。
+          # 単体/結合テストでは torchvision は不要（E2E ジョブ側でのみ入れる）。
+          pip install --index-url https://download.pytorch.org/whl/cpu torch
+          pip install -r app/requirements.txt
+          pip install ruff pytest httpx
+
+      - name: Lint with ruff
+        working-directory: app
+        run: ruff check .
+
+      - name: Run unit & integration tests (exclude e2e)
+        working-directory: app # app/pytest.ini が読まれ、rootdir=app・testpaths=tests になる
+        run: pytest -m "not e2e" -v
+
+  # =========================================================
+  # ジョブ2: E2E テスト（遅い・環境依存）
+  #   → 通常の push/PR では走らせず、手動実行 or 夜間スケジュールのみ
+  #   → 本物の重み(model.pth)が必要。無ければ test_e2e.py が自動 skip する
+  # =========================================================
+  e2e:
+    name: E2E Test (slow / on demand)
+    runs-on: ubuntu-latest
+    if: github.event_name == 'workflow_dispatch' || github.event_name == 'schedule'
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: ${{ env.PYTHON_VERSION }}
+          cache: "pip"
+          cache-dependency-path: app/requirements.txt
+
+      - name: Install dependencies (+ torchvision for real MNIST)
+        run: |
+          python -m pip install --upgrade pip
+          # E2E は実 MNIST を使うため torchvision も入れる
+          pip install --index-url https://download.pytorch.org/whl/cpu torch torchvision
+          pip install -r app/requirements.txt
+          pip install pytest httpx
+
+      - name: Restore trained weights (app/model.pth)
+        # 学習済み重みをキャッシュから復元。無い場合 test_e2e.py はモジュールごと自動 skip。
+        # 本番運用では「学習ジョブの成果物(artifact)」や Git LFS で供給するのが定石。
+        uses: actions/cache@v4
+        with:
+          path: app/model.pth
+          key: mnist-weights-v1
+
+      - name: Run E2E tests
+        working-directory: app
+        run: pytest -m e2e -v
+
+  # =========================================================
+  # ジョブ3: Docker ビルド & ghcr.io へ push
+  #   → test 成功後、かつ main への push のときだけ実行
+  # =========================================================
+  build-and-push:
+    name: Build & Push Image
+    needs: test # test が成功した時だけ走る（e2e の成否には依存させない）
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      packages: write # ghcr.io への push に必要
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+
+      - name: Log in to GitHub Container Registry
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Compute lowercase image base
+        # ghcr.io はイメージ名が小文字必須。owner/repo に大文字が混ざっても安全にする
+        run: echo "IMAGE_BASE=ghcr.io/${GITHUB_REPOSITORY,,}/${IMAGE_NAME}" >> "$GITHUB_ENV"
+
+      - name: Build and push
+        uses: docker/build-push-action@v6
+        with:
+          context: ./app # Dockerfile のあるディレクトリ（app/Dockerfile を用意すること）
+          push: true
+          tags: |
+            ${{ env.IMAGE_BASE }}:latest
+            ${{ env.IMAGE_BASE }}:${{ github.sha }}
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
