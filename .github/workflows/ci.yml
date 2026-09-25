@@ -15,8 +15,8 @@ on: # トリガー（動き出すきっかけ）
   pull_request:
     branches: ["main"]
   workflow_dispatch: # 「Actions」タブから手動実行できるようにする（E2E 用）
-  schedule:
-    - cron: "0 18 * * *" # 毎日 03:00 JST(=18:00 UTC) に E2E を回す（夜間バッチ）
+  # schedule:
+  #   - cron: "0 18 * * *" # 毎日 03:00 JST(=18:00 UTC) に E2E を回す（夜間バッチ）
 
 # 同じブランチで新しい push が来たら、進行中の古い実行をキャンセルして CI 時間を節約
 concurrency:
