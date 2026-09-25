@@ -53,7 +53,8 @@ jobs:
           # 単体/結合テストでは torchvision は不要（E2E ジョブ側でのみ入れる）。
           pip install --index-url https://download.pytorch.org/whl/cpu torch
           pip install -r app/requirements.txt
-          pip install ruff pytest httpx
+          # ruff はバージョンでデフォルトルールが変わるため、ローカルと同じ版に固定する
+          pip install ruff==0.15.12 pytest httpx
 
       - name: Lint with ruff
         working-directory: app
